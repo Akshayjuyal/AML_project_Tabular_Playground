@@ -260,41 +260,121 @@ def fit(training_file):
   data[7][2] = data[7][0]/len(event_table['team_scoring_in_10s'])
   data[7][3] = data[7][1]/len(event_table['team_scoring_in_10s'])
 
+  if(data[6][2] == 0):
+    data[6][2] = abs(1 - data[7][3])
+    data[6][3] = abs(1 - data[6][2])
+
+  if(data[7][2] == 0):
+    data[7][2] = abs(1 - data[6][3])
+    data[7][3] = abs(1 - data[6][2])
+
   freq_table=pd.DataFrame(data, row_names, col_names)
+  freq_table['num_yes'] = freq_table['num_yes'].astype(int)
+  freq_table['num_no'] = freq_table['num_no'].astype(int)
+  freq_table['p_yes'] = freq_table['p_yes'].astype(float)
+  freq_table['p_no'] = freq_table['p_no'].astype(float)
 
   return freq_table
 
-def predict(testing_file,freq_table):
+
+def predict(testing_file, freq_table):
   '''
   compute posterior probabilities using bayes theorem P(C|X) ~ P(X|C)*P(C)
   '''
+
   test_df = pd.read_csv(testing_file)
+  cov_mat = np.cov(np.array(test_df.fillna(0)).T)
+  mean = compute_mean(np.array(test_df.fillna(0)))
+  dim = test_df.shape[1]
+
   #P(A-swts | x_A1, x_A2, x_B1, x_B2,x_C1, x_C2) ~ P(x_A1)*P(x_A2)*P(x_B1)*P(x_B2)*P(x_C1)*P(x_C2)*P(A-stws)
   #P(B-swts | x_A1, x_A2, x_B1, x_B2,x_C1, x_C2) ~ P(x_A1)*P(x_A2)*P(x_B1)*P(x_B2)*P(x_C1)*P(x_C2)*P(B-stws)
 
   final_labels = []
 
+  
 
   submission_df = pd.DataFrame(columns=["id","team_A_scoring_within_10sec","team_B_scoring_within_10sec"])
 
   for i in range(len(test_df)):
-    pa_x = freq_table['p_yes'][0] * freq_table['p_yes'][1] * freq_table['p_yes'][2] * freq_table['p_yes'][3] \
-                    * freq_table['p_yes'][4] * freq_table['p_yes'][5] * freq_table['p_yes'][6] 
-    pb_x = freq_table['p_yes'][0] * freq_table['p_yes'][1] * freq_table['p_yes'][2] * freq_table['p_yes'][3] \
-                    * freq_table['p_yes'][4] * freq_table['p_yes'][5] * freq_table['p_yes'][7] 
+    p_x = p_est(np.array(test_df.iloc[i]),cov_mat,mean,dim)
 
-    
+    pa_x = freq_table['p_yes'][0] * freq_table['p_yes'][1] * freq_table['p_yes'][2] * freq_table['p_yes'][3] \
+                    * freq_table['p_yes'][4] * freq_table['p_yes'][5] * freq_table['p_yes'][6] * p_x
+
+    pb_x = freq_table['p_yes'][0] * freq_table['p_yes'][1] * freq_table['p_yes'][2] * freq_table['p_yes'][3] \
+                    * freq_table['p_yes'][4] * freq_table['p_yes'][5] * freq_table['p_yes'][7] * p_x
+
 
     final_labels.insert(i,[i,pa_x,pb_x])
-    
+
     submission_df = submission_df.append({'id': int(final_labels[i][0]),
                                           'team_A_scoring_within_10sec' : final_labels[i][1],
                                           'team_B_scoring_within_10sec' : final_labels[i][2]}, ignore_index = True)
+    
+
+  submission_df['id'] = submission_df['id'].astype(int)
+  submission_df['team_A_scoring_within_10sec'] = submission_df['team_A_scoring_within_10sec'].astype(str)
+  submission_df['team_B_scoring_within_10sec'] = submission_df['team_B_scoring_within_10sec'].astype(str)
+  submission_df['team_A_scoring_within_10sec'] = submission_df['team_A_scoring_within_10sec'].str.slice(0,4)
+  submission_df['team_B_scoring_within_10sec'] = submission_df['team_B_scoring_within_10sec'].str.slice(0,4)
+  submission_df['team_A_scoring_within_10sec'] = submission_df['team_A_scoring_within_10sec'].astype(float)
+  submission_df['team_B_scoring_within_10sec'] = submission_df['team_B_scoring_within_10sec'].astype(float)
+  submission_df['team_A_scoring_within_10sec'] = submission_df['team_A_scoring_within_10sec']/10
+  submission_df['team_B_scoring_within_10sec'] = submission_df['team_B_scoring_within_10sec']/10
+  submission_df['team_A_scoring_within_10sec'] = submission_df['team_A_scoring_within_10sec'].astype(str)
+  submission_df['team_B_scoring_within_10sec'] = submission_df['team_B_scoring_within_10sec'].astype(str)
+  submission_df['team_A_scoring_within_10sec'] = submission_df['team_A_scoring_within_10sec'].str.slice(0,5)
+  submission_df['team_B_scoring_within_10sec'] = submission_df['team_B_scoring_within_10sec'].str.slice(0,5)
+  submission_df.to_csv('out.csv', index=False)  
 
 
-  submission_df.to_csv('out.csv')  
+def p_est(x, cov_mat, mean,dim):
+  x_minus_m = np.zeros(dim)
+  for i in range(len(x)):
+    if(math.isnan(x[i])):
+      x_minus_m[i] = 0
+    else:
+      x_minus_m[i] = float(x[i]) - float(mean[i])
+  const_part = (1/((2*math.pi)**(dim/2)))*np.linalg.det(cov_mat)**(-1/2)
+  result = const_part * np.exp((-1/2)*x_minus_m @ np.linalg.inv(cov_mat) @ x_minus_m.T)
+  return result
+
+def compute_mean(X):
+  N,dim = X.shape
+  mean = np.zeros(dim)
+  for i in range(N):
+    for j in range(dim):
+      if(math.isnan(X[i][j])):
+        mean[j] += 0
+      else:
+        mean[j] += float(X[i][j])
+  return mean/(N-1)
 
 
-freq_table = fit('../train0/train_0_tail_10k.csv')
+def normalize(arr):
+  result = []
+  curr_min = sys.maxsize
+  curr_max = -sys.maxsize
+  for i in range(len(arr)):
+    a = float(arr[i][1])
+    b = float(arr[i][2])
+    if(min(a,b) < curr_min):
+      curr_min = min(a,b)
+    if(max(a,b) > curr_max):
+      curr_max = max(a,b)
 
-predict('test.csv',freq_table)
+  new_min = 0
+  new_max = 1
+
+
+  for i in range(len(arr)):
+    new_a = ((a-curr_min)/(curr_max-curr_min))*(new_max-new_min)+new_min
+    new_b = ((b-curr_min)/(curr_max-curr_min))*(new_max-new_min)+new_min
+    result.insert(i,(arr[i][0],new_a,new_b))
+  return result
+
+freq_table = fit('../train0/train_0_truncated_tail.csv')
+
+predict('../test.csv', freq_table)
+

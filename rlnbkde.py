@@ -142,6 +142,6 @@ class NaiveBayesClassifier:
     return result
 
 nb1 = NaiveBayesClassifier('rbf', .001)
-nb1.fit('train_0_tail_10k.csv')
+nb1.fit('../train0/train_0_tail_10k.csv')
 
-nb1.predict('test.csv')
+nb1.predict('../test.csv')
